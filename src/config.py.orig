@@ -1,7 +1,6 @@
 """
 Configuration management for Context7 Agent.
 Handles environment variables and MCP server configuration.
-*** UPDATED to use relative path for history. ***
 """
 
 import os
@@ -37,9 +36,8 @@ class Config(BaseSettings):
         default_factory=lambda: Path.home() / ".context7" / "mcp.json",
         description="Path to MCP configuration"
     )
-    # UPDATED: Changed to a relative path as requested.
     history_path: Path = Field(
-        default_factory=lambda: Path("data/history.json"),
+        default_factory=lambda: Path.home() / ".context7" / "history.json",
         description="Path to conversation history"
     )
     max_history: int = Field(
@@ -54,7 +52,6 @@ class Config(BaseSettings):
     def _ensure_directories(self):
         """Ensure required directories exist."""
         self.mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
-        # Ensure the new 'data' directory for history is created.
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
     
     def get_mcp_config(self) -> Dict[str, Any]:
@@ -69,6 +66,7 @@ class Config(BaseSettings):
             }
         }
         
+        # Save config if it doesn't exist
         if not self.mcp_config_path.exists():
             with open(self.mcp_config_path, 'w') as f:
                 json.dump(config, f, indent=2)
