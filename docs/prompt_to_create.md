@@ -117,12 +117,82 @@ Now create the main entry point for...
 - need to create a `README.md` file with setup and usage instructions  
 - need to create a `.gitignore` file for the project  
 
-Let us finish these remaining components.
+Now use the following guides to help you complete these and remaining components.
 
-# The Definitive Pydantic-AI & MCP Production Guide
-> **Field-Tested Recipes for Building Robust, Modern AI Agents**
+```
+class Context7Agent:
+    """Production-ready AI agent implementing a robust RAG pattern."""
+    
+    def __init__(self):
+        """Initialize with correct Pydantic AI v0.5+ patterns and a RAG-enforcing system prompt."""
+        self.provider = OpenAIProvider(
+            api_key=config.openai_api_key,
+            base_url=config.openai_base_url
+        )
+        
+        self.model = OpenAIModel(
+            model_name=config.openai_model,
+            provider=self.provider
+        )
+        
+        # This MCP server provides the `search` tool, which is critical for our RAG pipeline.
+        # The tool's description within the MCP server itself should be equally clear, e.g.,
+        # "Searches the official Context7 knowledge base for up-to-date documents."
+        self.mcp_server = MCPServerStdio(
+            command="npx",
+            args=["-y", "@upstash/context7-mcp@latest"]
+        )
+        
+        # =============================================================================
+        # == GOLD STANDARD RAG SYSTEM PROMPT                                         ==
+        # =============================================================================
+        # This new, highly-directive system prompt is the core of the fix. It
+        # forces the agent to follow a strict RAG pattern, preventing hallucination.
+        #
+        self.agent = Agent(
+            model=self.model,
+            mcp_servers=[self.mcp_server],
+            system_prompt="""
+            You are a specialized AI research assistant named Context7.
 
-This guide is the distilled wisdom from real-world debugging of `pydantic-ai`. It presents the gold standard patterns for creating a production-ready AI agent that uses MCP for tool-calling. Follow these recipes to build stable, maintainable, and powerful applications.
+            ## CORE DIRECTIVE
+            Your SOLE PURPOSE is to provide answers by exclusively using the information retrieved from the attached `search` tool, which connects to the official Context7 knowledge base. You are forbidden from using your own internal, pre-trained knowledge, as it is considered outdated and unreliable.
+
+            ## RULES OF ENGAGEMENT
+            1.  **MUST use the tool:** For any user question that is not a simple greeting (like "hello"), you MUST ALWAYS call the `search` tool to gather context before formulating an answer.
+            2.  **MUST ground your answer:** You MUST synthesize your final answer using ONLY the `documents` and `content` provided in the tool's output. Do not add any information not present in the retrieved context.
+            3.  **MUST handle failure:** If the `search` tool returns no relevant documents or an error, you MUST respond with the exact phrase: "I could not find any relevant information in the Context7 knowledge base to answer your question." Do not attempt to answer from memory.
+            4.  **MUST be concise:** When you call the tool, formulate a concise and effective search query string based on the user's intent. Do not pass the user's entire conversational text to the tool.
+
+            ## OPERATIONAL FLOW
+            For every user query, you will follow this exact sequence:
+            1.  **Analyze:** Deconstruct the user's query to identify the core topic.
+            2.  **Formulate Query:** Create a clear, concise search term (e.g., "pydantic-ai MCP server setup" or "agent streaming").
+            3.  **Execute Tool:** Call the `search` tool with the formulated query.
+            4.  **Analyze Context:** Carefully review the documents returned by the tool.
+            5.  **Synthesize Answer:** Construct a comprehensive answer based only on the retrieved documents, citing sources if possible.
+            """
+        )
+        
+        self.history = HistoryManager()
+    
+    async def initialize(self):
+        """Initialize the agent and load history."""
+        await self.history.load()
+    
+    async def chat_stream(
+        self, 
+        message: str, 
+        conversation_id: Optional[str] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Stream chat responses using the robust RAG-powered agent.
+        The control flow here remains simple because the complex RAG logic
+        is now handled by the LLM, as mandated by the system prompt.
+        """
+```        
+---
+Below is a definitive guide for Pydantic-AI agent with MCP tool calling that presents the gold standard patterns for creating a production-ready AI agent that uses MCP for tool-calling. Follow these recipes to build stable, maintainable, and powerful applications.
 
 ---
 
