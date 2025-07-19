@@ -1,0 +1,18 @@
+context7-agent/
+├── src/
+│   ├── __init__.py
+│   ├── agent.py          # Core agent with MCP integration
+│   ├── cli.py           # Rich TUI interface
+│   ├── config.py        # Configuration management
+│   ├── history.py       # Conversation persistence
+│   ├── themes.py        # Theme engine with animations
+│   └── utils.py         # Utility functions
+├── tests/
+│   ├── __init__.py
+│   ├── test_agent.py
+│   └── test_history.py
+├── .env.example
+├── .gitignore
+├── README.md
+├── requirements.txt
+└── pyproject.toml
