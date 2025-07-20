@@ -1,3 +1,5 @@
+# 📖 Context7 Terminal AI Agent - Complete Guide
+
 <div align="center">
 
 # 🌌 Context7 Terminal AI Agent
