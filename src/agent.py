@@ -1,8 +1,9 @@
 """
 Production-ready AI agent with Pydantic AI and MCP integration.
-This version implements a robust Retrieval-Augmented Generation (RAG)
-pattern by using a highly precise system prompt, fixing the flawed logic
-of the previous version and ensuring the agent uses its tools reliably.
+This version implements a robust "Hard Enforcement" Retrieval-Augmented
+Generation (RAG) pattern. The application logic now explicitly controls the
+multi-step process of query formulation, tool execution, and answer synthesis.
+*** THIS VERSION INCLUDES DIAGNOSTIC PRINT STATEMENTS FOR DEBUGGING ***
 """
 
 import asyncio
@@ -10,6 +11,9 @@ import json
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from datetime import datetime
 import logging
+
+# Import rich for styled, clear diagnostic printing
+from rich import print as rprint
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
@@ -22,10 +26,10 @@ from .history import HistoryManager
 logger = logging.getLogger(__name__)
 
 class Context7Agent:
-    """Production-ready AI agent implementing a robust RAG pattern."""
+    """Production-ready AI agent implementing a hard-enforced RAG pattern."""
     
     def __init__(self):
-        """Initialize with correct Pydantic AI v0.5+ patterns and a RAG-enforcing system prompt."""
+        """Initialize with correct Pydantic AI v0.5+ patterns and a synthesis-focused system prompt."""
         self.provider = OpenAIProvider(
             api_key=config.openai_api_key,
             base_url=config.openai_base_url
@@ -36,42 +40,16 @@ class Context7Agent:
             provider=self.provider
         )
         
-        # This MCP server provides the `search` tool, which is critical for our RAG pipeline.
-        # The tool's description within the MCP server itself should be equally clear, e.g.,
-        # "Searches the official Context7 knowledge base for up-to-date documents."
         self.mcp_server = MCPServerStdio(
             command="npx",
             args=["-y", "@upstash/context7-mcp@latest"]
         )
         
-        # =============================================================================
-        # == GOLD STANDARD RAG SYSTEM PROMPT                                         ==
-        # =============================================================================
-        # This new, highly-directive system prompt is the core of the fix. It
-        # forces the agent to follow a strict RAG pattern, preventing hallucination.
-        #
         self.agent = Agent(
             model=self.model,
             mcp_servers=[self.mcp_server],
             system_prompt="""
-            You are a specialized AI research assistant named Context7.
-
-            ## CORE DIRECTIVE
-            Your SOLE PURPOSE is to provide answers by exclusively using the information retrieved from the attached `search` tool, which connects to the official Context7 knowledge base. You are forbidden from using your own internal, pre-trained knowledge, as it is considered outdated and unreliable.
-
-            ## RULES OF ENGAGEMENT
-            1.  **MUST use the tool:** For any user question that is not a simple greeting (like "hello"), you MUST ALWAYS call the `search` tool to gather context before formulating an answer.
-            2.  **MUST ground your answer:** You MUST synthesize your final answer using ONLY the `documents` and `content` provided in the tool's output. Do not add any information not present in the retrieved context.
-            3.  **MUST handle failure:** If the `search` tool returns no relevant documents or an error, you MUST respond with the exact phrase: "I could not find any relevant information in the Context7 knowledge base to answer your question." Do not attempt to answer from memory.
-            4.  **MUST be concise:** When you call the tool, formulate a concise and effective search query string based on the user's intent. Do not pass the user's entire conversational text to the tool.
-
-            ## OPERATIONAL FLOW
-            For every user query, you will follow this exact sequence:
-            1.  **Analyze:** Deconstruct the user's query to identify the core topic.
-            2.  **Formulate Query:** Create a clear, concise search term (e.g., "pydantic-ai MCP server setup" or "agent streaming").
-            3.  **Execute Tool:** Call the `search` tool with the formulated query.
-            4.  **Analyze Context:** Carefully review the documents returned by the tool.
-            5.  **Synthesize Answer:** Construct a comprehensive answer based only on the retrieved documents, citing sources if possible.
+            You are a helpful AI research assistant. Your task is to provide a clear and comprehensive answer to the user's question based *only* on the provided context documents. Synthesize the information from the various documents into a single, coherent response. If the context is insufficient to answer the question, state that clearly.
             """
         )
         
@@ -87,85 +65,113 @@ class Context7Agent:
         conversation_id: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        Stream chat responses using the robust RAG-powered agent.
-        The control flow here remains simple because the complex RAG logic
-        is now handled by the LLM, as mandated by the system prompt.
+        Stream chat responses using a hard-enforced, two-step RAG pipeline with diagnostics.
         """
-        
         try:
+            rprint("[bold yellow]--- Starting RAG Pipeline ---[/bold yellow]")
             async with self.agent.run_mcp_servers():
-                # Build conversation history
-                history = self.history.get_messages(conversation_id or "default")
+                # =====================================================================
+                # == STEP 1: FORMULATE SEARCH QUERY                                  ==
+                # =====================================================================
+                rprint("[bold yellow][DEBUG-STEP-1A][/bold yellow] Formulating search query from user message...")
+                query_formulation_prompt = f"""
+                Based on the user's request, what is the optimal, concise search query for the Context7 documentation database?
+                The user's request is: "{message}"
+                Return ONLY the search query string, and nothing else.
+                """
                 
-                # Create proper message structure for Pydantic AI
-                messages = []
-                for msg in history[-6:]:  # Last 6 messages for context
-                    # The original file had a bug here, mapping "user" to "user" and "assistant" to "assistant".
-                    # The correct mapping should be from our history format to OpenAI's format if they differ.
-                    # Assuming they are already in the correct {"role": "...", "content": "..."} format.
-                    messages.append(msg)
+                query_formulation_agent = Agent(model=self.model)
+                query_result = await query_formulation_agent.run(query_formulation_prompt)
+                search_query = str(query_result.data).strip().strip('"')
+
+                rprint(f"[bold yellow][DEBUG-STEP-1B][/bold yellow] Formulated Search Query: [cyan]'{search_query}'[/cyan]")
+
+                if not search_query:
+                    raise ValueError("LLM failed to formulate a search query.")
                 
-                # Use Pydantic AI's native run method. Thanks to our new system prompt,
-                # this single call now triggers the entire RAG pipeline automatically.
-                result = await self.agent.run(
-                    message,
-                    message_history=messages
-                )
+                # =====================================================================
+                # == STEP 2: EXPLICITLY EXECUTE THE TOOL                             ==
+                # =====================================================================
+                # The name of the tool 'search' is assumed. A common bug is that the tool
+                # name is actually different (e.g., 'context7_search').
+                tool_execution_prompt = f"search(query='{search_query}')"
+                rprint(f"[bold yellow][DEBUG-STEP-2A][/bold yellow] Executing explicit tool call with prompt: [cyan]'{tool_execution_prompt}'[/cyan]")
                 
-                # Stream the response
-                content = str(result.data)
+                retrieval_result = await self.agent.run(tool_execution_prompt)
                 
+                # This is the most critical diagnostic print. It shows the RAW output from the tool.
+                rprint(f"[bold yellow][DEBUG-STEP-2B][/bold yellow] Raw data received from tool call:")
+                rprint(f"[dim white]{retrieval_result.data}[/dim white]")
+
+                try:
+                    retrieved_docs = json.loads(str(retrieval_result.data))
+                    if not isinstance(retrieved_docs, list) or not retrieved_docs:
+                        # This will trigger if the tool returns an empty list `[]`.
+                        raise ValueError("Tool returned no documents or an empty list.")
+                except (json.JSONDecodeError, ValueError) as e:
+                    # This will trigger if the tool output is not valid JSON or if it's empty.
+                    rprint(f"[bold red][DEBUG-FAIL][/bold red] Failed to parse tool output. Reason: {e}")
+                    rprint("[bold red]--- RAG Pipeline Failed ---[/bold red]")
+                    yield {
+                        "type": "content",
+                        "data": "I could not find any relevant information in the Context7 knowledge base to answer your question.",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    return
+
+                rprint(f"[bold green][DEBUG-STEP-2C][/bold green] Successfully parsed {len(retrieved_docs)} document(s) from tool output.")
+                
+                # =====================================================================
+                # == STEP 3: SYNTHESIZE THE FINAL ANSWER                             ==
+                # =====================================================================
+                rprint("[bold yellow][DEBUG-STEP-3A][/bold yellow] Synthesizing final answer based on retrieved documents...")
+                synthesis_prompt = f"""
+                Here is the context retrieved from the Context7 documentation database:
+                ---
+                {json.dumps(retrieved_docs, indent=2)}
+                ---
+                Based ONLY on the context provided above, provide a comprehensive answer to the user's original question: "{message}"
+                """
+                
+                final_result = await self.agent.run(synthesis_prompt)
+                content = str(final_result.data)
+                
+                rprint("[bold green][DEBUG-STEP-3B][/bold green] Synthesis complete.")
+                rprint("[bold green]--- RAG Pipeline Succeeded ---[/bold green]")
+
                 yield {
                     "type": "content",
                     "data": content,
                     "timestamp": datetime.now().isoformat()
                 }
                 
-                # Save to history
-                await self.history.save_message(
-                    conversation_id or "default",
-                    message,
-                    content
-                )
+                await self.history.save_message(conversation_id or "default", message, content)
                 
                 yield {
                     "type": "complete",
                     "data": content,
                     "timestamp": datetime.now().isoformat()
                 }
-                
+
         except Exception as e:
-            logger.error(f"Agent error: {e}")
+            logger.error(f"Agent RAG pipeline error: {e}")
+            rprint(f"[bold red][DEBUG-FATAL-ERROR][/bold red] An unexpected exception occurred in the RAG pipeline: {e}")
             yield {
                 "type": "error",
                 "data": str(e),
                 "timestamp": datetime.now().isoformat()
             }
     
-    async def search_documents(
-        self, 
-        query: str, 
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """
-        Search documents using MCP tools with proper error handling.
-        NOTE: This method is preserved to prevent regression but is not directly
-        used by the main chat loop, which now relies on the agent's autonomous tool use.
-        """
-        
+    async def search_documents(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search documents using MCP tools with proper error handling."""
         try:
             async with self.agent.run_mcp_servers():
                 search_prompt = f"""
                 Search the Context7 knowledge base for documents about: {query}
                 Return up to {limit} most relevant results with titles, sources, and brief summaries.
                 """
-                
                 result = await self.agent.run(search_prompt)
-                
-                # Parse and structure the results
                 response_text = str(result.data)
-                
-                # Attempt to parse as JSON if possible
                 try:
                     if response_text.strip().startswith('[') or response_text.strip().startswith('{'):
                         parsed = json.loads(response_text)
@@ -175,23 +181,15 @@ class Context7Agent:
                             return [parsed]
                 except json.JSONDecodeError:
                     pass
-                
-                # Fallback to structured response
                 return [{
                     "title": "Search Results",
                     "content": response_text,
                     "source": "Context7 MCP",
                     "score": 1.0
                 }]
-                
         except Exception as e:
             logger.error(f"Search error: {e}")
-            return [{
-                "title": "Search Error",
-                "content": f"Unable to search documents: {str(e)}",
-                "source": "Error",
-                "score": 0.0
-            }]
+            return [{"title": "Search Error", "content": f"Unable to search documents: {str(e)}", "source": "Error", "score": 0.0}]
     
     def get_conversations(self) -> List[Dict[str, Any]]:
         """Get all conversation histories."""
